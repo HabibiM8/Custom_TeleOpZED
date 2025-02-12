@@ -6,6 +6,9 @@ from constants_vuer import tip_indices
 from dex_retargeting.retargeting_config import RetargetingConfig
 import pyzed.sl as sl
 
+import plotter as lib_plotter
+import pyqtgraph as pg
+
 from pathlib import Path
 import time
 import yaml
@@ -28,6 +31,8 @@ from teleop.robot_control.robot_arm_ik import Arm_IK
 
 
 
+plotter = lib_plotter.Plotter(plot_title='Joint Angles', plot_grid=True, plot_legend=True, plot_size=(800, 300), as_app=True)
+plotter.plot_colors = [pg.intColor(i % 8) for i in range(16)]
 
 class VuerTeleop:
     def __init__(self, config_file_path):
@@ -102,6 +107,14 @@ class VuerTeleop:
         left_qpos = self.left_retargeting.retarget(left_hand_mat[tip_indices])[[4, 5, 6, 7, 10, 11, 8, 9, 0, 1, 2, 3]]
         right_qpos = self.right_retargeting.retarget(right_hand_mat[tip_indices])[[4, 5, 6, 7, 10, 11, 8, 9, 0, 1, 2, 3]]
 
+        # print(left_qpos)
+        # print(right_qpos)
+        # print('-------------------')
+        plotter.plot('left_qpos', left_qpos, labels=['q', 's'], legends=[i for i  in range(len(left_qpos))])
+        plotter.plot('right_qpos', right_qpos, labels=['q', 's'], legends=[i for i  in range(len(right_qpos))])
+        plotter.update()
+
+
         return head_rmat, left_wrist_mat, right_wrist_mat, left_qpos, right_qpos
 
 
@@ -109,16 +122,16 @@ if __name__ == '__main__':
     manager = Manager()
     image_queue = manager.Queue()
     teleoperator = VuerTeleop('inspire_hand.yml')
-    #h1hand = H1HandController()
-    #h1arm = H1ArmController()
-    #arm_ik = Arm_IK()
+    # h1hand = H1HandController()
+    h1arm = H1ArmController()
+    arm_ik = Arm_IK()
     #sm = VRImage((720, 1280)) #((480,640))
     #image_process = Process(target=image_receiver, args=(sm, teleoperator.resolution, teleoperator.crop_size_w, teleoperator.crop_size_h))
     #image_process.start()
             
     try:
-        #user_input = input("Please enter the start signal (enter 's' to start the subsequent program):")
-        #if user_input.lower() == 's':
+        user_input = input("Please enter the start signal (enter 's' to start the subsequent program):")
+        if user_input.lower() == 's':
             while True:
                 armstate = None
                 armv = None 
@@ -126,31 +139,42 @@ if __name__ == '__main__':
                 #np.copyto(teleoperator.img_array, np.array(frame))
                 #handstate = h1hand.get_hand_state()
 
-                """q_poseList=np.zeros(kNumMotors) # h1 with 20 motors
+                q_poseList=np.zeros(kNumMotors) # h1 with 20 motors
                 q_tau_ff=np.zeros(kNumMotors)
                 armstate,armv = h1arm.GetMotorState()
-"""
+
+                ik_armstate = np.concatenate((armstate[4:], armstate[:4]))
+                ik_armv= np.concatenate((armv[4:], armv[:4]))
+                print("armstate: ", armstate)
+                print("ik_armstate: ", ik_armstate)
+
                 head_rmat, left_pose, right_pose, left_qpos, right_qpos = teleoperator.step()
-                #sol_q ,tau_ff, flag = arm_ik.ik_fun(left_pose, right_pose, armstate, armv)
-                """if flag:
-                    q_poseList[12:20] = sol_q
-                    q_tau_ff[12:20] = tau_ff
+                sol_q ,tau_ff, flag = arm_ik.ik_fun(left_pose, right_pose, ik_armstate, ik_armv)
+                if flag:
+                    q_poseList[12:20] = np.concatenate((sol_q[4:], sol_q[:4]))
+                    q_tau_ff[12:20] = np.concatenate((tau_ff[4:], tau_ff[:4]))
+                    q_poseList[12:12+4] = armstate[:4]
+                    q_tau_ff[12:12+4] = np.zeros(4)
+
                 else:
-                    q_poseList[13:27] = armstate
+                    q_poseList[12:20] = armstate
                     q_tau_ff = np.zeros(20)
 
-                #h1arm.SetMotorPose(q_poseList, q_tau_ff)
+                plotter.plot('left_arm', q_poseList[12:12+4], labels=['q', 's'], legends=[i for i  in range(4)])
+                plotter.plot('right_arm', q_poseList[12+4:], labels=['q', 's'], legends=[i for i  in range(4)])
 
-                if right_qpos is not None and left_qpos is not None:
-                    # 4,5: index 6,7: middle, 0,1: pinky, 2,3: ring, 8,9: thumb
-                    right_angles = [1.7 - right_qpos[i] for i in [4, 6, 2, 0]]
-                    right_angles.append(1.2 - right_qpos[8])
-                    right_angles.append(0.5 - right_qpos[9])
+                # h1arm.SetMotorPose(q_poseList, q_tau_ff)
 
-                    left_angles = [1.7- left_qpos[i] for i in  [4, 6, 2, 0]]
-                    left_angles.append(1.2 - left_qpos[8])
-                    left_angles.append(0.5 - left_qpos[9])
-                    h1hand.crtl(right_angles,left_angles)
-"""
+                # if right_qpos is not None and left_qpos is not None:
+                #     # 4,5: index 6,7: middle, 0,1: pinky, 2,3: ring, 8,9: thumb
+                #     right_angles = [1.7 - right_qpos[i] for i in [4, 6, 2, 0]]
+                #     right_angles.append(1.2 - right_qpos[8])
+                #     right_angles.append(0.5 - right_qpos[9])
+
+                #     left_angles = [1.7- left_qpos[i] for i in  [4, 6, 2, 0]]
+                #     left_angles.append(1.2 - left_qpos[8])
+                #     left_angles.append(0.5 - left_qpos[9])
+                #     h1hand.crtl(right_angles,left_angles)
+
     except KeyboardInterrupt:
         exit(0)

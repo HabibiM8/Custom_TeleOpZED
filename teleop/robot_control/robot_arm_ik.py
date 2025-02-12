@@ -18,7 +18,7 @@ class Arm_IK:
         np.set_printoptions(precision=5, suppress=True, linewidth=200)
 
         # self.robot = pin.RobotWrapper.BuildFromURDF('../assets/h1_description/urdf/h1_with_hand.urdf', '../assets/h1_description/urdf')
-        self.robot = pin.RobotWrapper.BuildFromURDF('../../assets/h1_description/urdf/h1_with_hand.urdf', '../../assets/h1_description/') # for test
+        self.robot = pin.RobotWrapper.BuildFromURDF('../assets/h1_description/urdf/h1_with_hand.urdf', '../assets/h1_description/') # for test
 
         self.mixed_jointsToLockIDs = [  
                                         "right_hip_roll_joint",
@@ -200,6 +200,8 @@ class Arm_IK:
     def ik_fun(self, left_pose, right_pose, motorstate=None, motorV=None):
         if motorstate is not None:
             self.init_data = motorstate
+        # print(self.init_data.shape)
+        # print(self.var_q.shape)
         self.opti.set_initial(self.var_q, self.init_data)
 
         self.vis.viewer['L_ee_target'].set_transform(left_pose)   # for visualization

@@ -2,7 +2,7 @@ import numpy as np
 import threading
 import time
 
-from unitree_dds_wrapper.idl import unitree_hg
+from unitree_dds_wrapper.idl import unitree_hg, unitree_go
 from unitree_dds_wrapper.publisher import Publisher
 from unitree_dds_wrapper.subscription import Subscription
 from unitree_dds_wrapper.utils.crc import crc32
@@ -55,20 +55,20 @@ class H1ArmController:
         print("Initialize H1ArmController...")
         self.q_desList = np.zeros(kNumMotors)
         self.q_tau_ff = np.zeros(kNumMotors)
-        self.msg =  unitree_hg.msg.dds_.LowCmd_()
-        self.__packFmtHGLowCmd = '<2B2x' + 'B3x5fI' * 35 + '5I'
+        self.msg =  unitree_go.msg.dds_.LowCmd_()
+        # self.__packFmtHGLowCmd = '<2B2x' + 'B3x5fI' * 35 + '5I'
+        self.__packFmtHGLowCmd = '<4B4IH2x' + 'B3x5f3I' * 20 + '4B' + '55Bx2I'  # usr ljt add
 
         self.msg.head = [0xFE, 0xEF]
-        self.lowcmd_publisher = Publisher(unitree_hg.msg.dds_.LowCmd_, kTopicLowCommand)
-        self.lowstate_subscriber = Subscription(unitree_hg.msg.dds_.LowState_, kTopicLowState)
+        self.lowcmd_publisher = Publisher(unitree_go.msg.dds_.LowCmd_, kTopicLowCommand)
+        self.lowstate_subscriber = Subscription(unitree_go.msg.dds_.LowState_, kTopicLowState)
 
         self.motor_state_buffer = DataBuffer()
         self.motor_command_buffer = DataBuffer()
         self.base_state_buffer = DataBuffer()
 
-        self.kp_low = 140.0
-        self.kd_low = 7.5
-
+        self.kp_low = 40.0 # original value:140.0
+        self.kd_low = 5 # original value:7.5
         self.kp_high = 200.0
         self.kd_high = 5.0
 
@@ -85,6 +85,8 @@ class H1ArmController:
         self.report_dt = 0.1
         self.ratio = 0.0
         self.q_target = []
+
+        time.sleep(0.1)
         while not self.lowstate_subscriber.msg:
             print("lowstate_subscriber is not ok! Please check dds.")
             time.sleep(0.01)
@@ -166,21 +168,35 @@ class H1ArmController:
         self.__pack_crc()
 
     def __pack_crc(self):
-        origData = []
-        origData.append(self.msg.mode_pr)
-        origData.append(self.msg.mode_machine)
 
-        for i in range(kNumMotors):
+        #------usr ljt add------#
+        origData = []
+        origData.extend(self.msg.head)
+        origData.append(self.msg.level_flag)
+        origData.append(self.msg.frame_reserve)
+        origData.extend(self.msg.sn)
+        origData.extend(self.msg.version)
+        origData.append(self.msg.bandwidth)
+
+        for i in range(20):
             origData.append(self.msg.motor_cmd[i].mode)
             origData.append(self.msg.motor_cmd[i].q)
             origData.append(self.msg.motor_cmd[i].dq)
             origData.append(self.msg.motor_cmd[i].tau)
             origData.append(self.msg.motor_cmd[i].kp)
             origData.append(self.msg.motor_cmd[i].kd)
-            origData.append(self.msg.motor_cmd[i].reserve)
+            origData.extend(self.msg.motor_cmd[i].reserve)
 
-        origData.extend(self.msg.reserve)
+        origData.append(self.msg.bms_cmd.off)
+        origData.extend(self.msg.bms_cmd.reserve)
+
+        origData.extend(self.msg.wireless_remote)
+        origData.extend(self.msg.led)
+        origData.extend(self.msg.fan)
+        origData.append(self.msg.gpio)
+        origData.append(self.msg.reserve)
         origData.append(self.msg.crc)
+        #------usr ljt add------#
         calcdata = struct.pack(self.__packFmtHGLowCmd, *origData)
         calcdata =  self.__Trans(calcdata)
         self.msg.crc = self.__Crc32(calcdata)
@@ -198,7 +214,7 @@ class H1ArmController:
                 self.pre_communication()
                 self.lowcmd_publisher.msg = self.msg
                 self.lowcmd_publisher.write()
-            time.sleep(0.002)
+            # time.sleep(0.002)
                   
     def Control(self):
         while True:
@@ -214,6 +230,10 @@ class H1ArmController:
                     if self.IsWeakMotor(i):
                         motor_command_tmp.kp[i] = self.kp_low
                         motor_command_tmp.kd[i] = self.kd_low
+                        if self.IsDisabledMotor(i):
+                            motor_command_tmp.kp[i] = self.kp_low * 0
+                            motor_command_tmp.kd[i] = self.kd_low * 0
+
                     # elif self.IsWristMotor(i):
                     #     motor_command_tmp.kp[i] = self.kp_wrist
                     #     motor_command_tmp.kd[i] = self.kd_wrist
@@ -231,8 +251,9 @@ class H1ArmController:
             
     def GetMotorState(self):
         ms_tmp_ptr = self.motor_state_buffer.GetData()
+        # print(ms_tmp_ptr.q.shape)
         if ms_tmp_ptr:
-            return ms_tmp_ptr.q[13:27],ms_tmp_ptr.dq[13:27]
+            return ms_tmp_ptr.q[12:20],ms_tmp_ptr.dq[12:20]
         else:
             return None,None
 
@@ -240,7 +261,7 @@ class H1ArmController:
         while True:
             if self.lowstate_subscriber.msg:
                 self.LowStateHandler(self.lowstate_subscriber.msg)
-            time.sleep(0.002)
+            # time.sleep(0.002)
 
     def RecordMotorState(self, msg):
         ms_tmp = MotorState()
@@ -254,6 +275,15 @@ class H1ArmController:
         bs_tmp.omega = msg.imu_state.gyroscope
         bs_tmp.rpy = msg.imu_state.rpy
         self.base_state_buffer.SetData(bs_tmp)
+
+    def IsDisabledMotor(self, motor_index):
+        disabled_motors = [
+            JointIndex.kRightShoulderPitch,
+            JointIndex.kRightShoulderRoll,
+            JointIndex.kRightShoulderYaw,
+            JointIndex.kRightElbow,
+        ]
+        return motor_index in disabled_motors
 
     def IsWeakMotor(self, motor_index):
         weak_motors = [
